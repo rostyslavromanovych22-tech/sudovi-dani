@@ -1,0 +1,49 @@
+name: daily
+
+on:
+  push:
+    branches: [main]
+    paths: [split.py, .github/workflows/daily.yml]
+  schedule:
+    - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набір близько 06:00)
+    - cron: '20 13 * * *'  # 16:20 за Києвом, запасний запуск
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Завантажити набір ДСА
+        run: |
+          META=$(curl -sS --retry 3 -m 60 "https://data.gov.ua/api/3/action/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa")
+          URL=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['url'])")
+          MOD=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result'].get('last_modified') or '')")
+          echo "MOD=$MOD" >> "$GITHUB_ENV"
+          curl -sS --retry 3 -m 900 -o f.csv "$URL"
+          ls -l f.csv
+
+      - name: Нарізати
+        run: |
+          R=$(python3 split.py f.csv out "$MOD")
+          echo "$R"
+          echo "::notice::$R"
+
+      - name: Опублікувати в гілку data
+        run: |
+          cd out
+          git init -q -b data
+          git config user.name "sudovi-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Дані ДСА від $MOD"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" data
