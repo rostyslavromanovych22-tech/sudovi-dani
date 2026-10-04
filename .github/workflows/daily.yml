@@ -46,6 +46,15 @@ jobs:
           echo "::notice::$R"
           rm -rf f.csv prev
 
+      - name: Учасники зі «Стану розгляду справ»
+        continue-on-error: true
+        run: |
+          curl -sS --retry 3 -m 60 "$API/package_show?id=0ad60ea9-b029-456d-abc0-8c77a99b205c" -o st.json
+          URL=$(python3 -c "import json;rs=[r for r in json.load(open('st.json'))['result']['resources'] if r['url'].endswith('.zip')];rs.sort(key=lambda r: r.get('last_modified') or r.get('created') or '');print(rs[-1]['url'] if rs else '')")
+          echo "status archive: $URL"
+          [ -n "$URL" ] && curl -sS --retry 3 -m 1800 -o st.zip "$URL" && R=$(python3 split_status.py out st.zip) && echo "::notice::$R"
+          rm -f st.zip st.json
+
       - name: Знайти архіви ЄДРСР
         run: |
           curl -sS --retry 3 -m 60 -G "$API/package_search" \
