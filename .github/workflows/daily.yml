@@ -28,8 +28,12 @@ jobs:
 
       - name: Попередня публікація (для накопичення учасників)
         run: |
-          git clone -q --depth 1 -b data "https://github.com/${{ github.repository }}" prev || mkdir -p prev
-          ls prev | head
+          if git clone -q --depth 1 --filter=blob:none --no-checkout -b data "https://github.com/${{ github.repository }}" prev; then
+            (cd prev && git sparse-checkout set p && git checkout -q data)
+          else
+            mkdir -p prev
+          fi
+          echo "prev parties files: $(ls prev/p 2>/dev/null | wc -l)"
 
       - name: Засідання
         run: |
