@@ -1,11 +1,12 @@
+# і публікує результат у гілку `data` (одна версія, без історії).
 name: daily
 
 on:
   push:
     branches: [main]
-    paths: [split.py, .github/workflows/daily.yml]
+    paths: [split.py, split_docs.py, .github/workflows/daily.yml]
   schedule:
-    - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набір близько 06:00)
+    - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набори вночі й зранку)
     - cron: '20 13 * * *'  # 16:20 за Києвом, запасний запуск
   workflow_dispatch:
 
@@ -19,24 +20,63 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
+    env:
+      API: https://data.gov.ua/api/3/action
     steps:
       - uses: actions/checkout@v4
 
-      - name: Завантажити набір ДСА
+      - name: Засідання
         run: |
-          META=$(curl -sS --retry 3 -m 60 "https://data.gov.ua/api/3/action/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa")
+          META=$(curl -sS --retry 3 -m 60 "$API/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa")
           URL=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['url'])")
           MOD=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result'].get('last_modified') or '')")
           echo "MOD=$MOD" >> "$GITHUB_ENV"
           curl -sS --retry 3 -m 900 -o f.csv "$URL"
-          ls -l f.csv
-
-      - name: Нарізати
-        run: |
           R=$(python3 split.py f.csv out "$MOD")
-          echo "$R"
           echo "::notice::$R"
+          rm f.csv
+
+      - name: Знайти архіви ЄДРСР
+        run: |
+          curl -sS --retry 3 -m 60 -G "$API/package_search" \
+            --data-urlencode "q=Єдиний державний реєстр судових рішень" \
+            --data-urlencode "fq=organization:derzhavna-sudova-administratsiia-ukrayiny" \
+            --data-urlencode "rows=100" -o search.json
+          python3 - <<'PY'
+          import json, datetime
+          y = datetime.date.today().year
+          want = {str(y - 2), str(y - 1), str(y)}
+          found = {}
+          for p in json.load(open('search.json'))['result']['results']:
+              for r in p.get('resources', []):
+                  u = r.get('url', '')
+                  for yy in want:
+                      if u.endswith(f'edrsr_data_{yy}.zip'):
+                          found[yy] = u
+          with open('archives.txt', 'w') as f:
+              for yy in sorted(found):
+                  f.write(f'{yy} {found[yy]}\n')
+          print(found)
+          if len(found) < 2:
+              raise SystemExit('Не знайдено архіви ЄДРСР')
+          PY
+          echo "::notice::$(tr '\n' ' ' < archives.txt)"
+
+      - name: Документи ЄДРСР
+        run: |
+          while read y u; do curl -sS --retry 3 -m 1800 -o "e$y.zip" "$u"; done < archives.txt
+          ls -l e*.zip
+          R=$(python3 split_docs.py out e*.zip)
+          echo "::notice::$R"
+          rm e*.zip
+          python3 - <<'PY'
+          import json, datetime
+          m = json.load(open('out/meta.json'))
+          m['docs_years'] = [l.split()[0] for l in open('archives.txt')]
+          m['docs_generated'] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+          json.dump(m, open('out/meta.json', 'w'), ensure_ascii=False, indent=1)
+          PY
 
       - name: Опублікувати в гілку data
         run: |
