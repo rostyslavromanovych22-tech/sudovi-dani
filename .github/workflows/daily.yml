@@ -26,6 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Попередня публікація (для накопичення учасників)
+        run: |
+          git clone -q --depth 1 -b data "https://github.com/${{ github.repository }}" prev || mkdir -p prev
+          ls prev | head
+
       - name: Засідання
         run: |
           META=$(curl -sS --retry 3 -m 60 "$API/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa")
@@ -33,9 +38,9 @@ jobs:
           MOD=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result'].get('last_modified') or '')")
           echo "MOD=$MOD" >> "$GITHUB_ENV"
           curl -sS --retry 3 -m 900 -o f.csv "$URL"
-          R=$(python3 split.py f.csv out "$MOD")
+          R=$(python3 split.py f.csv out "$MOD" prev)
           echo "::notice::$R"
-          rm f.csv
+          rm -rf f.csv prev
 
       - name: Знайти архіви ЄДРСР
         run: |

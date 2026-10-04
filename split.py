@@ -5,7 +5,11 @@
 
 Застосунок завантажує лише файли для своїх справ (кілька КБ замість 400 МБ).
 
-Запуск: python3 split.py <csv> <out_dir> [source_modified]
+Додатково накопичує учасників справ з усіх засідань (зокрема минулих) у p/<суд>_<рік>.json:
+{ "464/3078/26": [учасники, суть, "дата засідання"] }. Попередня версія береться з <prev_dir>,
+тож з кожним днем учасників стає більше.
+
+Запуск: python3 split.py <csv> <out_dir> [source_modified] [prev_dir]
 """
 import csv
 import json
@@ -23,11 +27,25 @@ DATE_RE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}):(\d{2}))?")
 def main():
     src, out = sys.argv[1], sys.argv[2]
     source_modified = sys.argv[3] if len(sys.argv) > 3 else ""
+    prev_dir = sys.argv[4] if len(sys.argv) > 4 else ""
     kyiv_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date()
     keep_from = kyiv_today - timedelta(days=3)
 
     shards: dict[str, list] = {}
+    parties: dict[str, dict[str, list]] = {}  # key -> case -> [involved, description, "YYYY-MM-DD"]
     total = kept = 0
+
+    # учасники з попередньої публікації
+    prev_p = os.path.join(prev_dir, "p") if prev_dir else ""
+    if prev_p and os.path.isdir(prev_p):
+        for fn in os.listdir(prev_p):
+            if fn.endswith(".json"):
+                try:
+                    with open(os.path.join(prev_p, fn), encoding="utf-8") as fh:
+                        parties[fn[:-5]] = json.load(fh)
+                except (OSError, ValueError):
+                    pass
+    prev_cases = sum(len(v) for v in parties.values())
     with open(src, encoding="utf-8-sig", newline="") as f:
         rd = csv.reader(f, delimiter="\t", quotechar='"')
         header = next(rd)
@@ -45,9 +63,16 @@ def main():
             if not m or not d:
                 continue
             day = datetime(int(d.group(3)), int(d.group(2)), int(d.group(1))).date()
+            key = f"{int(m.group(1))}_{m.group(2)}"
+            involved = col(row, "case_involved")
+            if involved:
+                bucket = parties.setdefault(key, {})
+                cur = bucket.get(case)
+                iso = day.isoformat()
+                if cur is None or iso >= cur[2]:
+                    bucket[case] = [involved, col(row, "case_description"), iso]
             if day < keep_from:
                 continue
-            key = f"{int(m.group(1))}_{m.group(2)}"
             shards.setdefault(key, []).append([
                 col(row, "date"),
                 case,
@@ -73,6 +98,12 @@ def main():
             json.dump(rows, fh, ensure_ascii=False, separators=(",", ":"))
         sizes[key] = os.path.getsize(p)
 
+    os.makedirs(os.path.join(out, "p"), exist_ok=True)
+    for key, cases in parties.items():
+        with open(os.path.join(out, "p", f"{key}.json"), "w", encoding="utf-8") as fh:
+            json.dump(cases, fh, ensure_ascii=False, separators=(",", ":"))
+    parties_cases = sum(len(v) for v in parties.values())
+
     meta = {
         "source": "ДСА України, «Список справ призначених до розгляду», data.gov.ua (CC-BY 4.0)",
         "source_modified": source_modified,
@@ -81,12 +112,14 @@ def main():
         "rows_total": total,
         "rows_kept": kept,
         "shards": len(shards),
+        "parties_cases": parties_cases,
     }
     with open(os.path.join(out, "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
 
     big = sorted(sizes.items(), key=lambda kv: -kv[1])[:5]
-    print(f"rows {total} kept {kept} shards {len(shards)} "
+    print(f"parties {prev_cases} -> {parties_cases} cases; "
+          f"rows {total} kept {kept} shards {len(shards)} "
           f"max {[f'{k}:{v // 1024}KB' for k, v in big]} "
           f"464_26 {sizes.get('464_26', 0) // 1024}KB")
 
