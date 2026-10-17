@@ -1,10 +1,16 @@
+# Розміщується в публічному репозиторії даних як .github/workflows/daily.yml
+# Щодня завантажує з data.gov.ua:
+#   1) «Список справ призначених до розгляду» -> s/<суд>_<рік>.json + учасники p/<суд>_<рік>.json (split.py)
+#   1б) «Стан розгляду справ» -> доповнює учасників і стадію в p/ (split_status.py)
+#   2) ЄДРСР за поточний і два попередні роки -> d/<суд>_<рік>_<0..3>.json + dicts.json (split_docs.py)
+#   3) «Єдиний реєстр боржників» (Мін'юст) -> b/<хеш ПІБ>.json + b/dicts.json (split_erb.py)
 # і публікує результат у гілку `data` (одна версія, без історії).
 name: daily
 
 on:
   push:
     branches: [main]
-    paths: [split.py, split_docs.py, .github/workflows/daily.yml]
+    paths: [split.py, split_docs.py, split_status.py, split_erb.py, .github/workflows/daily.yml]
   schedule:
     - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набори вночі й зранку)
     - cron: '20 13 * * *'  # 16:20 за Києвом, запасний запуск
@@ -95,6 +101,15 @@ jobs:
           m['docs_generated'] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
           json.dump(m, open('out/meta.json', 'w'), ensure_ascii=False, indent=1)
           PY
+
+      - name: Реєстр боржників (виконавчі провадження)
+        continue-on-error: true
+        run: |
+          curl -sS --retry 3 -m 60 "$API/package_show?id=783b9b50-faba-4cc9-a393-60485e395b1d" -o erb.json
+          URL=$(python3 -c "import json;rs=[r for r in json.load(open('erb.json'))['result']['resources'] if r['url'].lower().endswith('.zip')];rs.sort(key=lambda r: r.get('last_modified') or r.get('created') or '');print(rs[-1]['url'] if rs else '')")
+          echo "erb archive: $URL"
+          [ -n "$URL" ] && curl -sS -L --retry 3 -m 1800 -o erb.zip "$URL" && R=$(python3 split_erb.py out erb.zip) && echo "::notice::$R"
+          rm -rf erb.zip erb.json out/_erb_tmp
 
       - name: Опублікувати в гілку data
         run: |
