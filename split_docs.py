@@ -3,7 +3,7 @@
 Нарізка ЄДРСР (data.gov.ua, архіви edrsr_data_<рік>.zip) на маленькі файли за кодом суду і роком
 з номера справи і залишком середнього числа: 464/3078/26 -> d/464_26_2.json (3078 % 4 = 2). Плюс довідники (суди, форми, категорії).
 
-Рядок: [doc_id, case, judgment_code, adjudication_date YYYY-MM-DD, court_code, judge, category_code, justice_kind]
+Рядок: [doc_id, case, judgment_code, adjudication_date YYYY-MM-DD, court_code, judge, category_code, justice_kind, date_publ YYYY-MM-DD | ""]
 Текст рішення: https://reyestr.court.gov.ua/Review/<doc_id>
 
 Запуск: python3 split_docs.py <out_dir> <archive.zip> [<archive.zip> ...]
@@ -69,6 +69,8 @@ def main():
                     (r.get("judge") or "").strip(),
                     r.get("category_code", ""),
                     r.get("justice_kind", ""),
+                    # дата оприлюднення тексту; порожньо — тексту в реєстрі ще немає (метадані приходять раніше)
+                    (r.get("date_publ") or "")[:10] if (r.get("doc_url") or "").strip() else "",
                 ]
                 shards.setdefault(key, []).append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
 
