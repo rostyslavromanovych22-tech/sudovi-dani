@@ -1,0 +1,28 @@
+{
+ "source": "ДСА України, «Список справ призначених до розгляду», data.gov.ua (CC-BY 4.0)",
+ "source_modified": "2026-10-24T06:18:13.693412",
+ "generated": "2026-10-24T13:43:08+00:00",
+ "fields": [
+  "date",
+  "case",
+  "court_name",
+  "court_room",
+  "judges",
+  "case_involved",
+  "case_description"
+ ],
+ "rows_total": 587838,
+ "rows_kept": 481624,
+ "shards": 6329,
+ "parties_cases": 1638787,
+ "status_rows": 1462332,
+ "docs_years": [
+  "2024",
+  "2025",
+  "2026"
+ ],
+ "docs_generated": "2026-10-24T13:47:31+00:00",
+ "erb_rows": 10604727,
+ "erb_people": 9771307,
+ "erb_generated": "2026-10-24T13:51:21+00:00"
+}
