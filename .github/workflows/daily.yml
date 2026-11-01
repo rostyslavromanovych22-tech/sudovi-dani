@@ -105,11 +105,33 @@ jobs:
       - name: Реєстр боржників (виконавчі провадження)
         continue-on-error: true
         run: |
-          curl -sS --retry 3 -m 60 "$API/package_show?id=783b9b50-faba-4cc9-a393-60485e395b1d" -o erb.json
-          URL=$(python3 -c "import json;rs=[r for r in json.load(open('erb.json'))['result']['resources'] if r['url'].lower().endswith('.zip')];rs.sort(key=lambda r: r.get('last_modified') or r.get('created') or '');print(rs[-1]['url'] if rs else '')")
+          URL=$(curl -fsS --retry 3 -m 60 "$API/package_show?id=783b9b50-faba-4cc9-a393-60485e395b1d" | python3 -c "import sys,json;rs=[r for r in json.load(sys.stdin)['result']['resources'] if r['url'].lower().endswith('.zip')];rs.sort(key=lambda r: r.get('last_modified') or r.get('created') or '');print(rs[-1]['url'] if rs else '')" 2>erb.err) || URL=""
           echo "erb archive: $URL"
-          [ -n "$URL" ] && curl -sS -L --retry 3 -m 1800 -o erb.zip "$URL" && R=$(python3 split_erb.py out erb.zip) && echo "::notice::$R"
-          rm -rf erb.zip erb.json out/_erb_tmp
+          R=""
+          if [ -n "$URL" ] && curl -fsS -L --retry 3 -m 1800 -o erb.zip "$URL" 2>>erb.err && R=$(python3 split_erb.py out erb.zip 2>>erb.err); then
+            echo "::notice::$R"
+          else
+            # збій не має стирати дані: лишаємо останню вдалу копію, а причина видна в анотації запуску
+            echo "::warning::Реєстр боржників не оновлено: $R $(tail -c 300 erb.err | tr '\n' ' ')"
+            rm -rf out/b out/_erb_tmp
+            if git clone -q --depth 1 --filter=blob:none --no-checkout -b data "https://github.com/${{ github.repository }}" prevb; then
+              (cd prevb && git sparse-checkout set b && git checkout -q data) || true
+              if [ -d prevb/b ]; then
+                cp -r prevb/b out/b
+                python3 - <<'PY'
+          import json
+          prev = json.load(open('prevb/meta.json'))
+          m = json.load(open('out/meta.json'))
+          for k in ('erb_rows', 'erb_people', 'erb_generated'):
+              if k in prev:
+                  m[k] = prev[k]
+          m['erb_stale'] = True
+          json.dump(m, open('out/meta.json', 'w'), ensure_ascii=False, indent=1)
+          PY
+              fi
+            fi
+          fi
+          rm -rf erb.zip erb.err prevb out/_erb_tmp
 
       - name: Опублікувати в гілку data
         run: |

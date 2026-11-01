@@ -30,6 +30,7 @@ import os
 import re
 import sys
 import zipfile
+import zlib
 
 BUCKETS = 4096
 csv.field_size_limit(10_000_000)
@@ -71,6 +72,42 @@ def iso(d: str) -> str:
     return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
 
 
+class RawDeflate(io.RawIOBase):
+    """Читає запис ZIP напряму. Для файлів понад 4 ГБ архів Мін'юсту пише розмір без ZIP64 (остача від 2^32),
+    і zipfile обриває читання на цьому числі з помилкою CRC; справжній кінець — кінець потоку deflate."""
+
+    def __init__(self, archive: str, info: zipfile.ZipInfo):
+        self.fh = open(archive, "rb")
+        self.fh.seek(info.header_offset)
+        head = self.fh.read(30)
+        self.fh.seek(int.from_bytes(head[26:28], "little") + int.from_bytes(head[28:30], "little"), 1)
+        self.info = info
+        self.z = zlib.decompressobj(-15)
+        self.buf = b""
+        self.crc = 0
+        self.size = 0
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        while not self.buf and not self.z.eof:
+            chunk = self.fh.read(1 << 20)
+            if not chunk:
+                raise ValueError("архів обірвано")
+            self.buf = self.z.decompress(chunk)
+            self.crc = zlib.crc32(self.buf, self.crc)
+            self.size += len(self.buf)
+        if not self.buf:
+            if self.crc != self.info.CRC or self.size & 0xFFFFFFFF != self.info.file_size & 0xFFFFFFFF:
+                raise ValueError("архів пошкоджено: не збігається CRC або розмір")
+            return 0
+        n = min(len(b), len(self.buf))
+        b[:n] = self.buf[:n]
+        self.buf = self.buf[n:]
+        return n
+
+
 class Dict:
     def __init__(self):
         self.items: list = []
@@ -105,10 +142,10 @@ def main():
         pending, pending_n = {}, 0
 
     with zipfile.ZipFile(archive) as z:
-        for name in z.namelist():
-            if not name.lower().endswith(".csv"):
+        for info in z.infolist():
+            if not info.filename.lower().endswith(".csv"):
                 continue
-            with z.open(name) as raw:
+            with io.BufferedReader(RawDeflate(archive, info), 1 << 20) as raw:
                 text = io.TextIOWrapper(raw, encoding="cp1251", errors="replace", newline="")
                 # заголовок розділено «;», а рядки даних — комою; визначаємо окремо
                 first = text.readline()
