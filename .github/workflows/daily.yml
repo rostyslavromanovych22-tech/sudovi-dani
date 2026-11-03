@@ -167,6 +167,23 @@ jobs:
           git init -q -b data
           git config user.name "sudovi-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          REMOTE="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          # GitHub приймає до 2 ГБ за один push: вантажимо частинами в тимчасову гілку,
+          # а data перемикаємо останнім кроком, тож застосунок не бачить неповних даних
+          push() {
+            for i in 1 2 3; do
+              if R=$(git push -f "$REMOTE" "$1" 2>&1); then return 0; fi
+              echo "спроба $i: $R"
+              sleep 30
+            done
+            echo "::error::Не вдалося опублікувати: $(echo "$R" | tail -c 400 | tr '\n' ' ')"
+            return 1
+          }
+          git add d
+          git commit -qm "Документи ЄДРСР"
+          push data:refs/heads/data-next
           git add -A
           git commit -qm "Дані ДСА від $MOD"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" data
+          push data:refs/heads/data-next
+          push data:refs/heads/data
+          git push "$REMOTE" --delete data-next
