@@ -27,6 +27,24 @@
   <p>Засідання, документи й виконавчі провадження — з нагадуваннями</p>
 </header>
 <main>
+  <div id="shared" class="card" hidden>
+    <h2 style="margin-top:0">Справа № <span id="shared-no"></span></h2>
+    <p><a id="shared-open" href="#"><b>Відкрити в застосунку</b></a></p>
+    <p>Немає застосунку? <a href="https://play.google.com/apps/testing/ua.rostyslav.sudovizasidannya">Встановити з Google Play</a></p>
+  </div>
+  <script>
+    (function () {
+      var n = new URLSearchParams(location.search).get('case');
+      if (!n || !/^\d{1,4}\/\d{1,6}\/\d{2}([-\/][\w\/-]+)?$/.test(n)) return;
+      document.getElementById('shared').hidden = false;
+      document.getElementById('shared-no').textContent = n;
+      var path = 'case?n=' + encodeURIComponent(n);
+      var isAndroid = /Android/i.test(navigator.userAgent);
+      document.getElementById('shared-open').href = isAndroid
+        ? 'intent://' + path + '#Intent;scheme=sudovizasidannya;package=ua.rostyslav.sudovizasidannya;end'
+        : 'sudovizasidannya://' + path;
+    })();
+  </script>
   <p class="note">Незалежний застосунок. Не є державним сервісом і не пов’язаний із ДСА, судами чи Мін’юстом. Дані — з відкритих державних реєстрів (data.gov.ua, CC BY 4.0).</p>
 
   <h2>Що вміє</h2>

@@ -2,6 +2,7 @@
 # Щодня завантажує з data.gov.ua:
 #   1) «Список справ призначених до розгляду» -> s/<суд>_<рік>.json + учасники p/<суд>_<рік>.json (split.py)
 #   1б) «Стан розгляду справ» -> доповнює учасників і стадію в p/ (split_status.py)
+#   1в) Індекс сторін для моніторингу за ПІБ або назвою -> n/<хеш слова>.json (split_names.py)
 #   2) ЄДРСР за поточний і два попередні роки -> d/<суд>_<рік>_<0..3>.json + dicts.json (split_docs.py)
 #   3) «Єдиний реєстр боржників» (Мін'юст) -> b/<хеш ПІБ>.json + b/dicts.json (split_erb.py)
 # і публікує результат у гілку `data` (одна версія, без історії).
@@ -10,7 +11,7 @@ name: daily
 on:
   push:
     branches: [main]
-    paths: [split.py, split_docs.py, split_status.py, split_erb.py, .github/workflows/daily.yml]
+    paths: [split.py, split_docs.py, split_status.py, split_erb.py, split_names.py, .github/workflows/daily.yml]
   schedule:
     - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набори вночі й зранку)
     - cron: '20 13 * * *'  # 16:20 за Києвом, запасний запуск
@@ -60,6 +61,33 @@ jobs:
           echo "status archive: $URL"
           [ -n "$URL" ] && curl -sS --retry 3 -m 1800 -o st.zip "$URL" && R=$(python3 split_status.py out st.zip) && echo "::notice::$R"
           rm -f st.zip st.json
+
+      - name: Індекс сторін (моніторинг за ПІБ або назвою)
+        continue-on-error: true
+        run: |
+          if R=$(python3 split_names.py out 2>names.err); then
+            echo "::notice::$R"
+          else
+            # збій не має стирати дані: лишаємо останню вдалу копію
+            echo "::warning::Індекс сторін не оновлено: $R $(tail -c 300 names.err | tr '\n' ' ')"
+            rm -rf out/n
+            if git clone -q --depth 1 --filter=blob:none --no-checkout -b data "https://github.com/${{ github.repository }}" prevn; then
+              (cd prevn && git sparse-checkout set n && git checkout -q data) || true
+              if [ -d prevn/n ]; then
+                cp -r prevn/n out/n
+                python3 - <<'PY'
+          import json
+          prev = json.load(open('prevn/meta.json'))
+          m = json.load(open('out/meta.json'))
+          for k in ('names_cases', 'names_words', 'names_generated'):
+              if k in prev:
+                  m[k] = prev[k]
+          json.dump(m, open('out/meta.json', 'w'), ensure_ascii=False, indent=1)
+          PY
+              fi
+            fi
+          fi
+          rm -rf names.err prevn
 
       - name: Знайти архіви ЄДРСР
         run: |
