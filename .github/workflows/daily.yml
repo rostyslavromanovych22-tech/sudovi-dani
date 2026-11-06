@@ -27,7 +27,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       API: https://data.gov.ua/api/3/action
     steps:
