@@ -13,8 +13,9 @@ on:
     branches: [main]
     paths: [split.py, split_docs.py, split_status.py, split_erb.py, split_names.py, .github/workflows/daily.yml]
   schedule:
-    - cron: '20 4 * * *'   # 07:20 за Києвом (ДСА оновлює набори вночі й зранку)
-    - cron: '20 13 * * *'  # 16:20 за Києвом, запасний запуск
+    # Кожні 2 години: GitHub часто запізнюється з розкладом або пропускає запуски,
+    # а data.gov.ua буває недоступний. Запуск без нових даних закінчується за кілька секунд (job check).
+    - cron: '40 */2 * * *'
   workflow_dispatch:
 
 permissions:
@@ -25,7 +26,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.c.outputs.run }}
+    steps:
+      - id: c
+        env:
+          EVENT: ${{ github.event_name }}
+          PUBLISHED: https://raw.githubusercontent.com/${{ github.repository }}/data/meta.json
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os, subprocess
+
+          def get(url):
+              # curl, як і в основних кроках
+              r = subprocess.run(['curl', '-fsS', '--retry', '2', '-m', '60', url], capture_output=True, text=True)
+              if r.returncode:
+                  raise RuntimeError(r.stderr.strip() or f'curl {r.returncode}')
+              return json.loads(r.stdout)
+
+          now = datetime.datetime.now(datetime.timezone.utc)
+          try:
+              pub = get(os.environ['PUBLISHED'])
+          except Exception:
+              pub = {}
+          try:
+              age = (now - datetime.datetime.fromisoformat(pub['generated'])).total_seconds() / 3600
+          except Exception:
+              age = 999.0
+          err = ''
+          try:
+              src = get('https://data.gov.ua/api/3/action/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa')['result'].get('last_modified') or ''
+          except Exception as e:
+              src = None
+              err = str(e)[:200]
+
+          if src is None:
+              run, why = False, f'data.gov.ua недоступний ({err}); дані опубліковано {age:.0f} год тому'
+              if age > 36:
+                  # мовчки чекати далі не можна: лист про збій прийде власнику репозиторію
+                  print(f'::error::{why}')
+                  raise SystemExit(1)
+          elif os.environ['EVENT'] != 'schedule':
+              run, why = True, 'ручний запуск або зміна коду'
+          elif src != pub.get('source_modified'):
+              run, why = True, f'нові засідання: {src}'
+          elif age > 20:
+              run, why = True, f'остання публікація {age:.0f} год тому (ЄДРСР, боржники)'
+          else:
+              run, why = False, f'нових даних немає (засідання від {src}, публікація {age:.0f} год тому)'
+          print(f'::notice::{"Оновлюю" if run else "Пропускаю"}: {why}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'run={"true" if run else "false"}\n')
+          PY
+
   publish:
+    needs: check
+    if: needs.check.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
