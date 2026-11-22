@@ -65,8 +65,8 @@ jobs:
 
           if src is None:
               run, why = False, f'data.gov.ua недоступний ({err}); дані опубліковано {age:.0f} год тому'
-              if age > 36:
-                  # мовчки чекати далі не можна: лист про збій прийде власнику репозиторію
+              # мовчки чекати далі не можна: лист про збій прийде власнику — але раз на добу, а не після кожного запуску
+              if age > 36 and age % 24 < 3:
                   print(f'::error::{why}')
                   raise SystemExit(1)
           elif os.environ['EVENT'] != 'schedule':
