@@ -32,6 +32,7 @@ jobs:
     outputs:
       run: ${{ steps.c.outputs.run }}
     steps:
+      - uses: actions/checkout@v4
       - id: c
         env:
           EVENT: ${{ github.event_name }}
@@ -57,14 +58,16 @@ jobs:
           except Exception:
               age = 999.0
           err = ''
-          try:
-              src = get('https://data.gov.ua/api/3/action/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa')['result'].get('last_modified') or ''
-          except Exception as e:
+          # data.gov.ua, а за його збою — сайт ДСА (resolve.py)
+          r = subprocess.run(['python3', 'resolve.py', 'hearings'], capture_output=True, text=True)
+          if r.returncode == 0:
+              src = r.stdout.strip().split('	')[1]
+          else:
               src = None
-              err = str(e)[:200]
+              err = r.stderr.strip()[-200:]
 
           if src is None:
-              run, why = False, f'data.gov.ua недоступний ({err}); дані опубліковано {age:.0f} год тому'
+              run, why = False, f'джерела недоступні ({err}); дані опубліковано {age:.0f} год тому'
               # мовчки чекати далі не можна: лист про збій прийде власнику — але раз на добу, а не після кожного запуску
               if age > 36 and age % 24 < 3:
                   print(f'::error::{why}')
@@ -103,9 +106,11 @@ jobs:
 
       - name: Засідання
         run: |
-          META=$(curl -sS --retry 3 -m 60 "$API/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa")
-          URL=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['url'])")
-          MOD=$(echo "$META" | python3 -c "import sys,json;print(json.load(sys.stdin)['result'].get('last_modified') or '')")
+          # data.gov.ua, а за його збою — сайт ДСА
+          SRC=$(python3 resolve.py hearings)
+          URL=$(printf '%s' "$SRC" | cut -f1)
+          MOD=$(printf '%s' "$SRC" | cut -f2)
+          echo "hearings: $URL ($MOD)"
           echo "MOD=$MOD" >> "$GITHUB_ENV"
           curl -sS --retry 3 -m 900 -o f.csv "$URL"
           R=$(python3 split.py f.csv out "$MOD" prev)
@@ -115,11 +120,10 @@ jobs:
       - name: Учасники зі «Стану розгляду справ»
         continue-on-error: true
         run: |
-          curl -sS --retry 3 -m 60 "$API/package_show?id=0ad60ea9-b029-456d-abc0-8c77a99b205c" -o st.json
-          URL=$(python3 -c "import json;rs=[r for r in json.load(open('st.json'))['result']['resources'] if r['url'].endswith('.zip')];rs.sort(key=lambda r: r.get('last_modified') or r.get('created') or '');print(rs[-1]['url'] if rs else '')")
+          URL=$(python3 resolve.py status || true)  # лише data.gov.ua; без нього учасники лишаються з попередньої публікації
           echo "status archive: $URL"
           [ -n "$URL" ] && curl -sS --retry 3 -m 1800 -o st.zip "$URL" && R=$(python3 split_status.py out st.zip) && echo "::notice::$R"
-          rm -f st.zip st.json
+          rm -f st.zip
 
       - name: Індекс сторін (моніторинг за ПІБ або назвою)
         continue-on-error: true
@@ -150,28 +154,10 @@ jobs:
 
       - name: Знайти архіви ЄДРСР
         run: |
-          curl -sS --retry 3 -m 60 -G "$API/package_search" \
-            --data-urlencode "q=Єдиний державний реєстр судових рішень" \
-            --data-urlencode "fq=organization:derzhavna-sudova-administratsiia-ukrayiny" \
-            --data-urlencode "rows=100" -o search.json
-          python3 - <<'PY'
-          import json, datetime
-          y = datetime.date.today().year
-          want = {str(y - 2), str(y - 1), str(y)}
-          found = {}
-          for p in json.load(open('search.json'))['result']['results']:
-              for r in p.get('resources', []):
-                  u = r.get('url', '')
-                  for yy in want:
-                      if u.endswith(f'edrsr_data_{yy}.zip'):
-                          found[yy] = u
-          with open('archives.txt', 'w') as f:
-              for yy in sorted(found):
-                  f.write(f'{yy} {found[yy]}\n')
-          print(found)
-          if len(found) < 2:
-              raise SystemExit('Не знайдено архіви ЄДРСР')
-          PY
+          # data.gov.ua, а за його збою — сайт ДСА; потрібно щонайменше два роки
+          python3 resolve.py edrsr | tr '\t' ' ' > archives.txt
+          cat archives.txt
+          [ "$(wc -l < archives.txt)" -ge 2 ] || { echo 'Не знайдено архіви ЄДРСР'; exit 1; }
           echo "::notice::$(tr '\n' ' ' < archives.txt)"
 
       - name: Документи ЄДРСР
