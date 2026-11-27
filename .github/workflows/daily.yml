@@ -11,11 +11,13 @@ name: daily
 on:
   push:
     branches: [main]
-    paths: [split.py, split_docs.py, split_status.py, split_erb.py, split_names.py, .github/workflows/daily.yml]
+    paths: [resolve.py, split.py, split_docs.py, split_status.py, split_erb.py, split_names.py, .github/workflows/daily.yml]
   schedule:
     # Кожні 2 години: GitHub часто запізнюється з розкладом або пропускає запуски,
     # а data.gov.ua буває недоступний. Запуск без нових даних закінчується за кілька секунд (job check).
     - cron: '40 */2 * * *'
+    # сайт ДСА оновлює засідання щодня о ~03:03 UTC (05:03 за Києвом) — забираємо одразу
+    - cron: '15 3 * * *'
   workflow_dispatch:
 
 permissions:
