@@ -1,4 +1,4 @@
-"""Звідки брати набори ДСА: спершу data.gov.ua, а якщо портал недоступний — сайт ДСА (dsa.court.gov.ua, «Відкриті дані»).
+"""Звідки брати набори ДСА: data.gov.ua або сайт ДСА (dsa.court.gov.ua, «Відкриті дані»); для засідань — свіжіше з двох.
 
 Запуск:
   python3 resolve.py hearings  -> «URL<TAB>MOD»   (Список справ призначених до розгляду)
@@ -37,14 +37,36 @@ def dsa_files(ds):
     return [(name, url) for f in files for name, url in f.items()]
 
 
+def _when(mod):
+    """Час оновлення з рядка MOD (ISO з data.gov.ua або «dsa:<HTTP-дата>») для порівняння джерел."""
+    from email.utils import parsedate_to_datetime
+    try:
+        if mod.startswith('dsa:'):
+            return parsedate_to_datetime(mod[4:]).replace(tzinfo=None)
+        return datetime.datetime.fromisoformat(mod[:19])
+    except Exception:
+        return datetime.datetime.min
+
+
 def hearings():
+    # Беремо СВІЖІШЕ з двох джерел: data.gov.ua після техробіт віддавав набір від 15.11,
+    # а сайт ДСА оновлюється щодня. Старіший набір «губить» нові засідання — застосунок
+    # тоді хибно повідомляв «засідання знято / перенесено».
+    found = []
     try:
         r = get(f'{API}/resource_show?id=98d6ba0d-1c18-4835-ae68-bfc0af724bfa')['result']
-        return f"{r['url']}\t{r.get('last_modified') or ''}"
+        found.append((r['url'], r.get('last_modified') or ''))
     except Exception as e:
-        print(f'data.gov.ua: {e}; беру з сайту ДСА', file=sys.stderr)
-    url = next(u for n, u in dsa_files(DSA_HEARINGS) if n.lower().endswith('.csv'))
-    return f'{url}\t{last_modified(url)}'
+        print(f'data.gov.ua: {e}', file=sys.stderr)
+    try:
+        url = next(u for n, u in dsa_files(DSA_HEARINGS) if n.lower().endswith('.csv'))
+        found.append((url, last_modified(url)))
+    except Exception as e:
+        print(f'ДСА: {e}', file=sys.stderr)
+    if not found:
+        raise RuntimeError('жодне джерело засідань не відповіло')
+    url, mod = max(found, key=lambda x: _when(x[1]))
+    return f'{url}	{mod}'
 
 
 def status():
